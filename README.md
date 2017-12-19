@@ -9,7 +9,7 @@ slow down.
 
 Controls
 --------
-z - zoom 
+z - shift 
 
 Installation 
 ------------ 
