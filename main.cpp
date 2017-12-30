@@ -18,8 +18,17 @@ const int GOAL_WIDTH = 25;
 const int GOAL_HEIGHT = 100; 
 const int GOAL_VEL = -5; 
 const int Z_TIMER_LENGTH = 250; 
-const int Z_COOLDOWN = 100; 
-const int SPEED_INCREASE_INTERVAL = 5; 
+const int SPEED_INCREASE_INTERVAL = 1; 
+const SDL_Color COLOR_BASE = { 0, 0, 255, 255 }; // blue 
+const SDL_Color COLOR_SHIFT = { 255, 255, 0, 255 }; // yellow 
+const SDL_Color COLOR_COOLDOWN = { 0, 255, 0, 255 }; // green 
+const SDL_Color COLOR_FAIL = { 255, 0, 0, 255 }; // red 
+const SDL_Color COLOR_FONT = { 0, 0, 64, 255 }; // dark blue 
+const Uint32 COOLDOWN_FAST = 100; 
+const Uint32 COOLDOWN_SLOW = 500; 
+const int HEALTH_MAX = 10; 
+const int TARGET_EASY = SPEED_INCREASE_INTERVAL * 10; 
+const int TIMER_EASY = TARGET_EASY + 5; 
 
 struct GameText 
 {
@@ -30,20 +39,40 @@ struct GameText
 	int number = 0; 
 }; 
 
+enum GameState 
+{
+	menu, 
+	playing, 
+	paused, 
+	gameOver, 
+	win
+}; 
+
 SDL_Window* window = NULL; 
 SDL_Renderer* renderer = NULL; 
 SDL_Event e; 
 
-// game variables 
+// game variables requiring load-time go here 
 GameText score; 
 GameText health; 
+// GameText boost; 
+GameText target; 
+GameText burnOut; 
 LTexture background[2]; 
+GameText targetTime; 
+LTimer targetTimer; 
+GameText winner; 
+GameText replay; 
+SDL_Rect playerBox = { (WINDOW_WIDTH - PLAYER_SIZE)/2, (WINDOW_HEIGHT/2) + GOAL_HEIGHT - PLAYER_SIZE, 
+		PLAYER_SIZE, PLAYER_SIZE }; 
 
 bool init(); 
 bool loadMedia(); 
 void close(); 
 // check collision between two rectangles 
 bool checkCollision( SDL_Rect, SDL_Rect ); 
+// reset game variables 
+void resetGame( GameState & ); 
 
 int main( int argc, char* args[] ) 
 {
@@ -66,16 +95,18 @@ int main( int argc, char* args[] )
 	LTimer frameTimer; 
 	LTimer zTimer; 
 	LTimer zCoolDown; 
-	SDL_Rect playerBox = { (WINDOW_WIDTH - PLAYER_SIZE)/2, (WINDOW_HEIGHT/2) + GOAL_HEIGHT - PLAYER_SIZE, 
-		PLAYER_SIZE, PLAYER_SIZE }; 
+	
 	SDL_Rect goalBox = { WINDOW_WIDTH, WINDOW_HEIGHT / 2, GOAL_WIDTH, GOAL_HEIGHT };  
 	SDL_Point bgPos1 = { 0, 0 }; 
 	SDL_Point bgPos2 = { WINDOW_WIDTH, 0 }; 
-	
-	
+	int zCoolDownLength = COOLDOWN_FAST; 
+	GameState gameState = playing; 
 	
 	bool previousGoalTaken = false; 
 	bool previousSpeedTaken = false; 
+	
+	// reset variables 
+	resetGame( gameState ); 
 	
 	// game loop here 
 	while( running ) 
@@ -92,11 +123,24 @@ int main( int argc, char* args[] )
 			} 
 			else if( e.type == SDL_KEYDOWN ) 
 			{
-				// if z is pressed & cooldown is over, change the player's color 
-				if( e.key.keysym.sym == SDLK_z && !zTimer.isStarted() && !zCoolDown.isStarted() ) 
+				
+				switch( gameState ) 
 				{
-					zTimer.start(); 
-				} 
+					case playing: 
+						// if z is pressed & cooldown is over, change the player's color 
+						if( e.key.keysym.sym == SDLK_z && !zTimer.isStarted() && !zCoolDown.isStarted() ) 
+						{
+							zTimer.start(); 
+						} 
+						break; 
+					case gameOver: case win: 
+						if( e.key.keysym.sym == SDLK_z ) 
+						{
+							// reset the game w/ z if the game ended 
+							resetGame( gameState ); 
+						}
+						break; 
+				}
 			}
 		}
 		
@@ -125,69 +169,152 @@ int main( int argc, char* args[] )
 			bgPos2.x = bgPos1.x + background[ 0 ].getWidth(); 
 		}
 		
-		// display goal 
-		SDL_SetRenderDrawColor( renderer, 0xff, 0x88, 0x00, 0x00 ); 
-		SDL_RenderFillRect( renderer, &goalBox ); 
 		
-		// display rectangle 
-		if( !zCoolDown.isStarted() ) 
+		
+		switch( gameState ) 
 		{
-			if( zTimer.isStarted() ) 
-			{
-				SDL_SetRenderDrawColor( renderer, 0x11, 0x11, 0xbb, 0x00 ); 
-				
-				// check if the goal collided with the player if z is open 
-				if( checkCollision( goalBox, playerBox ) ) 	
+			case playing: 
+				// display goal 
+				SDL_SetRenderDrawColor( renderer, 0xff, 0x88, 0x00, 0x00 ); 
+				SDL_RenderFillRect( renderer, &goalBox ); 
+				// display rectangle 
+				if( !zCoolDown.isStarted() ) 
 				{
-					// up the speed if z was pressed on the goal 
-					if( !previousGoalTaken ) 
+					if( zTimer.isStarted() ) 
 					{
-						// increment score 
-						score.text = "Speed: " + to_string( ++score.number ); 
-						previousGoalTaken = true; 
+						// set color to the shift color 
+						SDL_SetRenderDrawColor( renderer, COLOR_SHIFT.r, COLOR_SHIFT.g, COLOR_SHIFT.b, 0xff ); 
+						
+						// check if the goal collided with the player if z is open 
+						if( checkCollision( goalBox, playerBox ) ) 	
+						{
+							// up the speed if z was pressed on the goal 
+							if( !previousGoalTaken ) 
+							{
+								// increment score 
+								score.text = "Shift: " + to_string( ++score.number ); 
+								previousGoalTaken = true; 
+							}
+						}
+						if( zTimer.getTicks() / Z_TIMER_LENGTH )
+						{
+							zTimer.stop(); 
+							zCoolDown.start(); 
+						}
+					}
+					else
+					{
+						// set color to base color 
+						SDL_SetRenderDrawColor( renderer, COLOR_BASE.r, COLOR_BASE.g, COLOR_BASE.b, 0xff ); 
 					}
 				}
-				if( zTimer.getTicks() / Z_TIMER_LENGTH )
+				else
 				{
-					zTimer.stop(); 
-					zCoolDown.start(); 
+					// if player doesn't catch goal before zTimer ends and 
+					// speed hasn't been lowered and 
+					// the previous goal wasn't taken 
+					if( !previousSpeedTaken ) 
+					{
+						
+						if( !previousGoalTaken ) 
+						{
+							// lower the health and update the health text 
+							health.number -= score.number / SPEED_INCREASE_INTERVAL; 
+							health.text = "Integrity: " + to_string( health.number ); 
+							
+							// check for gameOver condition 
+							if( health.number <= 0 ) 
+							{
+								// set the number to zero to make sure the text doesn't show negative 
+								health.number = 0; 
+								health.text = "BURNED OUT"; 
+								gameState = gameOver; 
+														
+							}
+							
+							// lower speed by current-speed-based division of speed increase interval 
+							score.number -= score.number / SPEED_INCREASE_INTERVAL; 
+							score.text = "Shift: " + to_string( score.number ); 
+							previousSpeedTaken = true; 
+							
+							
+							
+						}
+					}
+					
+					if( !previousSpeedTaken ) 
+					{
+						SDL_SetRenderDrawColor( renderer, COLOR_COOLDOWN.r, COLOR_COOLDOWN.g, COLOR_COOLDOWN.b, 0xff ); 
+						zCoolDownLength = COOLDOWN_FAST; 
+					}
+					else
+					{
+						SDL_SetRenderDrawColor( renderer, COLOR_FAIL.r, COLOR_FAIL.g, COLOR_FAIL.b, 0xff ); 
+						zCoolDownLength = COOLDOWN_SLOW; 
+					}
+					
+					if( zCoolDown.getTicks() / zCoolDownLength ) 
+					{
+						zCoolDown.stop(); 
+						previousGoalTaken = false; 
+						previousSpeedTaken = false; 
+					}
 				}
-			}
-			else
-			{
-				SDL_SetRenderDrawColor( renderer, 0x33, 0x33, 0x77, 0x00 ); 
-			}
+				
+				// if the targetTimer number reaches zero, check shift 
+				if( targetTime.number == 0 ) 
+				{
+					// if the player hasn't reached shift target, game over 
+					if( score.number < target.number ) 
+					{
+						gameState = gameOver; 
+					}
+					// otherwise, game win 
+					else
+					{
+						gameState = win; 
+					}
+				}
+				
+				SDL_RenderFillRect( renderer, &playerBox ); 
+				
+				// update the score texture 
+				score.fontTexture.loadFromRenderedText( renderer, score.text, score.fontColor, score.font ); 
+				// render the score texture 
+				score.fontTexture.render( (WINDOW_WIDTH - score.fontTexture.getWidth())/2, 
+										  0, renderer ); 		
+				
+				health.fontTexture.loadFromRenderedText( renderer, health.text, health.fontColor, health.font ); 
+				health.fontTexture.render( 0, 0, renderer ); 
+				target.fontTexture.render( 100, 100, renderer ); 
+				targetTime.number = TIMER_EASY - targetTimer.getTicks() / 1000; 
+				targetTime.text = "Timer: " + to_string( targetTime.number ); 
+				targetTime.fontTexture.loadFromRenderedText( renderer, targetTime.text, targetTime.fontColor, targetTime.font ); 
+				targetTime.fontTexture.render( 100, 115, renderer ); 
+				break; 
+			case gameOver: 
+				burnOut.fontTexture.render( (WINDOW_WIDTH - burnOut.fontTexture.getWidth())/2, 
+											(WINDOW_HEIGHT - burnOut.fontTexture.getHeight())/2, renderer ); 
+				break; 
+			case win: 
+				// render player exit motion until it leaves the screen 
+				if( playerBox.y + playerBox.h > 0 ) 
+				{
+					playerBox.y -= 1; 
+					SDL_SetRenderDrawColor( renderer, COLOR_BASE.r, COLOR_BASE.g, COLOR_BASE.b, COLOR_BASE.a ); 
+					SDL_RenderFillRect( renderer, &playerBox ); 
+				}
+				else 
+				{
+					// render the replay cue below the win text 
+					replay.fontTexture.render( ( WINDOW_WIDTH - replay.fontTexture.getWidth() )/2, ( WINDOW_HEIGHT - replay.fontTexture.getHeight() )/2 + 15, renderer ); 
+				}
+				
+				// render win text 
+				winner.fontTexture.render( ( WINDOW_WIDTH - winner.fontTexture.getWidth() ) / 2, ( WINDOW_HEIGHT - winner.fontTexture.getHeight() ) / 2, renderer ); 
+				
+				break; 
 		}
-		else
-		{
-			// if player doesn't catch goal before zTimer ends and 
-			// speed hasn't been lowered and 
-			// the previous goal wasn't taken 
-			if( !previousSpeedTaken && !previousGoalTaken ) 
-			{
-				// lower speed by current-speed-based division of speed increase interval 
-				score.number -= score.number / SPEED_INCREASE_INTERVAL; 
-				score.text = "Speed: " + to_string( score.number ); 
-				previousSpeedTaken = true; 
-			}
-			SDL_SetRenderDrawColor( renderer, 0x33, 0x33, 0x77, 0x00 ); 
-			if( zCoolDown.getTicks() / Z_COOLDOWN ) 
-			{
-				zCoolDown.stop(); 
-				previousGoalTaken = false; 
-				previousSpeedTaken = false; 
-			}
-		}
-		SDL_RenderFillRect( renderer, &playerBox ); 
-		
-		// update the score texture 
-		score.fontTexture.loadFromRenderedText( renderer, score.text, score.fontColor, score.font ); 
-		// render the score texture 
-		score.fontTexture.render( (WINDOW_WIDTH - score.fontTexture.getWidth())/2, 
-								  0, renderer ); 		
-		
-		
-		
 		
 		
 		
@@ -276,8 +403,8 @@ bool loadMedia()
 	bool success = true; 
 	// load assets and check for success 
 	
-	score.text = "Speed: " + to_string( score.number ); 
-	score.fontColor = { 0, 0, 128 }; 
+	score.text = "Shift: " + to_string( score.number ); 
+	score.fontColor = COLOR_FONT; 
 	score.font = TTF_OpenFont( "Fairfax.ttf", 64 ); 
 	if( score.font == NULL ) 
 	{
@@ -287,6 +414,96 @@ bool loadMedia()
 	if( !score.fontTexture.loadFromRenderedText( renderer, score.text, score.fontColor, score.font ) ) 
 	{
 		cout << "failed to render text" << endl; 
+		success = false; 
+	}
+	
+	health.number = HEALTH_MAX; 
+	health.text = "Integrity: " + to_string( health.number ); 
+	health.font = TTF_OpenFont( "Fairfax.ttf", 24 ); 
+	health.fontColor = COLOR_FONT; 
+	if( health.font == NULL ) 
+	{
+		cout << "health font failed" << endl; 
+		success = false;
+	}
+	if( !health.fontTexture.loadFromRenderedText( renderer, health.text, health.fontColor, health.font ) ) 
+	{
+		success = false;
+		cout << "failed to render health text" << endl; 
+	}
+	
+	burnOut.text = "Press z to try again"; 
+	burnOut.font = TTF_OpenFont( "Fairfax.ttf", 48 ); 
+	burnOut.fontColor = COLOR_FONT; 
+	if( health.font == NULL ) 
+	{
+		cout << "burnOut font failed" << endl; 
+		success = false; 
+	}
+	if( !burnOut.fontTexture.loadFromRenderedText( renderer, burnOut.text, burnOut.fontColor, burnOut.font ) ) 
+	{
+		cout << "failed to render burnOut text" << endl; 
+		success = false; 
+	}
+	/*
+	boost.number = 0; 
+	boost.text = "Boost: " + to_string( boost.number ) + " "; 
+	*/ 
+	
+	target.number = TARGET_EASY; 
+	target.text = "Target: " + to_string( target.number ); 
+	target.font = TTF_OpenFont( "Fairfax.ttf", 20 ); 
+	target.fontColor = COLOR_FONT; 
+	if( target.font == NULL ) 
+	{
+		cout << "target font failed" << endl; 
+		success = false; 
+	}
+	if( !target.fontTexture.loadFromRenderedText( renderer, target.text, target.fontColor, target.font ) ) 
+	{
+		cout << "failed to render target text" << endl; 
+		success = false; 
+	}
+	
+	targetTime.text = "Timer: "; 
+	targetTime.font = TTF_OpenFont( "Fairfax.ttf", 20 ); 
+	targetTime.fontColor = COLOR_FONT; 
+	if( targetTime.font == NULL ) 
+	{
+		cout << "targetTime font failed" << endl; 
+		success = false; 
+	}
+	if( !targetTime.fontTexture.loadFromRenderedText( renderer, targetTime.text, targetTime.fontColor, targetTime.font ) ) 
+	{
+		cout << "failed to render targetTimer text" << endl; 
+		success = false; 
+	}
+	
+	winner.text = "Target shift reached. Returning to home base. "; 
+	winner.font = TTF_OpenFont( "Fairfax.ttf", 18 ); 
+	winner.fontColor = COLOR_FONT; 
+	if( winner.font == NULL ) 
+	{
+		cout << "winner font failed" << endl; 
+		success = false; 
+	}
+	if( !winner.fontTexture.loadFromRenderedText( renderer, winner.text, winner.fontColor, winner.font ) ) 
+	{
+		cout << "failed to render winner texture" << endl; 
+		success = false; 
+	}
+	
+	replay.font = TTF_OpenFont( "Fairfax.ttf", 24 ); 
+	replay.text = "Press z to replay"; 
+	replay.fontColor = COLOR_FONT; 
+	if( replay.font == NULL ) 
+	{
+		cout << "replay font failed" << endl; 
+		success = false; 
+	}
+	if( !replay.fontTexture.loadFromRenderedText( renderer, replay.text, replay.fontColor, replay.font ) ) 
+	{
+		cout << "failed to render replay texture" << endl; 
 		success = false; 
 	}
 	
@@ -300,6 +517,13 @@ bool loadMedia()
 void close() 
 {
 	TTF_CloseFont( score.font ); 
+	TTF_CloseFont( health.font ); 
+	// TTF_CloseFont( boost.font ); 
+	TTF_CloseFont( burnOut.font ); 
+	TTF_CloseFont( target.font ); 
+	TTF_CloseFont( targetTime.font ); 
+	TTF_CloseFont( winner.font ); 
+	TTF_CloseFont( replay.font ); 
 	
 	SDL_DestroyRenderer( renderer ); 
 	SDL_DestroyWindow( window ); 
@@ -344,3 +568,29 @@ bool checkCollision( SDL_Rect a, SDL_Rect b )
 	// the axes are colliding, so there is a collision between the rects 
 	return true; 
 }
+
+void resetGame( GameState &gameState ) 
+{
+	// reset targetTimer and target time 
+	targetTimer.start(); 
+	targetTime.number = TIMER_EASY; 
+	
+	// reset player position 
+	playerBox.x = (WINDOW_WIDTH - PLAYER_SIZE)/2; 
+	playerBox.y = (WINDOW_HEIGHT/2) + GOAL_HEIGHT - PLAYER_SIZE; 
+	
+	// reset number values 
+	score.number = 0; 
+	health.number = HEALTH_MAX; 
+	
+	// reset text values 
+	score.text = "Shift: " + to_string( score.number ); 
+	health.text = "Integrity: " + to_string( health.number ); 
+	
+	// re-render values 
+	score.fontTexture.loadFromRenderedText( renderer, score.text, score.fontColor, score.font ); 
+	health.fontTexture.loadFromRenderedText( renderer, health.text, health.fontColor, health.font ); 
+	
+	gameState = playing; 
+}
+
