@@ -3,8 +3,8 @@
 #include <SDL_image.h> 
 #include <SDL_ttf.h> 
 #include <SDL_mixer.h> 
-#include "../../LTimer.h" 
-#include "../../LTexture.h" 
+#include "LTimer.h" 
+#include "LTexture.h" 
 #define PI 3.14159265
 
 using namespace std; 
@@ -28,7 +28,7 @@ const Uint32 COOLDOWN_FAST = 100;
 const Uint32 COOLDOWN_SLOW = 500; 
 const int HEALTH_MAX = 10; 
 const int TARGET_EASY = SPEED_INCREASE_INTERVAL * 10; 
-const int TIMER_EASY = TARGET_EASY + 5; 
+const int TIMER_EASY = TARGET_EASY * 3; 
 
 struct GameText 
 {
@@ -45,7 +45,8 @@ enum GameState
 	playing, 
 	paused, 
 	gameOver, 
-	win
+	win, 
+	scene 
 }; 
 
 SDL_Window* window = NULL; 
@@ -218,10 +219,13 @@ int main( int argc, char* args[] )
 						
 						if( !previousGoalTaken ) 
 						{
-							// lower the health and update the health text 
-							health.number -= score.number / SPEED_INCREASE_INTERVAL; 
-							health.text = "Integrity: " + to_string( health.number ); 
-							
+							// if the speed is above zero 
+							if( score.number > 0 ) 
+							{
+								// lower the health and update the health text 
+								health.number -= SPEED_INCREASE_INTERVAL; 
+								health.text = "Integrity: " + to_string( health.number ); 
+							}
 							// check for gameOver condition 
 							if( health.number <= 0 ) 
 							{
@@ -232,8 +236,16 @@ int main( int argc, char* args[] )
 														
 							}
 							
+							// clamp the penalty to at or above zero 
+							if( score.number - SPEED_INCREASE_INTERVAL < 0 ) 
+							{
+								score.number = 0; 
+							}
+							else 
+							{
+								score.number -= SPEED_INCREASE_INTERVAL; 
+							}
 							// lower speed by current-speed-based division of speed increase interval 
-							score.number -= score.number / SPEED_INCREASE_INTERVAL; 
 							score.text = "Shift: " + to_string( score.number ); 
 							previousSpeedTaken = true; 
 							

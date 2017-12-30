@@ -1,6 +1,6 @@
-OBJS = main.cpp ../../LTimer.cpp ../../LTexture.cpp 
+OBJS = main.cpp LTimer.cpp LTexture.cpp 
 
-OBJ_NAME = hop 
+OBJ_NAME = shift 
 
 LINKER_FLAGS = -lSDL2 -lSDL2_image -lSDL2_ttf -lSDL2_mixer -std=c++11
 
